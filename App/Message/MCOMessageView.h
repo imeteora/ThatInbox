@@ -21,7 +21,11 @@
 @property (nonatomic, assign) BOOL prefetchIMAPImagesEnabled;
 @property (nonatomic, assign) BOOL prefetchIMAPAttachmentsEnabled;
 
+@property (nonatomic, assign) BOOL gestureRecognizerEnabled;
+
 - (NSString*) getMessage;
+
+- (void)handleTapAtpoint:(CGPoint)point;
 
 @end
 
@@ -31,6 +35,16 @@
 - (NSData *) MCOMessageView:(MCOMessageView *)view dataForPartWithUniqueID:(NSString *)partUniqueID;
 - (void) MCOMessageView:(MCOMessageView *)view fetchDataForPartWithUniqueID:(NSString *)partUniqueID
      downloadedFinished:(void (^)(NSError * error))downloadFinished;
+
+- (void) MCOMessageView:(MCOMessageView *)view handleMailtoUrlString:(NSString *)mailtoAddress;
+
+- (void) MCOMessageView:(MCOMessageView *)view
+   didTappedInlineImage:(UIImage *)inlineImage
+                atPoint:(CGPoint)point
+              imageRect:(CGRect)rect
+              imagePath:(NSString *)path
+              imageName:(NSString *)imgName
+          imageMimeType:(NSString *)mimeType;
 
 - (NSString *) MCOMessageView_templateForMainHeader:(MCOMessageView *)view;
 - (NSString *) MCOMessageView_templateForImage:(MCOMessageView *)view;

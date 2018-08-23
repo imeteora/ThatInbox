@@ -21,8 +21,11 @@
 #import "INKWelcomeViewController.h"
 #import "UTIFunctions.h"
 #import "StandaloneStatsEmitter.h"
+#import "AuthNavigationViewController.h"
 
 @implementation AppDelegate
+
+#warning Be sure to register for a filepicker apikey at http://inkfilepicker.com and add it to the Supporting Files/ThatInbox-Info.plist
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
@@ -118,6 +121,8 @@
 	// Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
 }
 
+# pragma mark - INK
+
 - (void) replyBlob:(INKBlob *)blob action:(INKAction*)action error:(NSError*)error
 {
 
@@ -130,8 +135,31 @@
     UINavigationController *nc = [[UINavigationController alloc] initWithRootViewController:vc];
     nc.modalPresentationStyle = UIModalPresentationPageSheet;
     
-    UIViewController *root = [[[[UIApplication sharedApplication]delegate] window] rootViewController];
-    [root presentViewController:nc animated:YES completion:nil];
+    PKRevealController *root = (PKRevealController *)[[[[UIApplication sharedApplication] delegate] window] rootViewController];
+    UISplitViewController *focused = (UISplitViewController *)[root focusedController];
+    UIViewController *presented = focused.presentedViewController;
+    
+    if (presented && [presented isKindOfClass:[AuthNavigationViewController class]])
+    {
+        AuthNavigationViewController *authViewController = (AuthNavigationViewController *)presented;
+        [authViewController setCompletionHandler:^(AuthNavigationViewController *viewController, GTMOAuth2Authentication *auth, NSError *error)
+        {
+            if (!error && auth)
+            {
+                [viewController setDismissHandler:^(BOOL dismissed)
+                {
+                    if (dismissed)
+                    {
+                        [root presentViewController:nc animated:YES completion:nil];
+                    }
+                }];
+            }
+        }];
+    }
+    else
+    {
+        [root presentViewController:nc animated:YES completion:nil];
+    }
 }
 
 

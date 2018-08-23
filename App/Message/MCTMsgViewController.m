@@ -12,16 +12,25 @@
 
 #import <INK/UIView+Ink.h>
 #import <INK/InkCore.h>
+#import <INK/INK.h>
+//#import "UTIFunctions.h"
 #import <MobileCoreServices/MobileCoreServices.h>
 
 #import "ComposerViewController.h"
 #import "AuthManager.h"
+#import "ActionPickerViewController.h"
+#import "UIPopoverController+FlatUI.h"
+#import "UIColor+FlatUI.h"
 
 #import "MBProgressHUD.h"
 #import "DelayedAttachment.h"
 #import "UTIFunctions.h"
 
-@interface MCTMsgViewController ()
+@interface MCTMsgViewController () <UIGestureRecognizerDelegate, UIPopoverControllerDelegate, ActionPickerDelegate>
+{
+    UIPopoverController *_actionPickerPopover;
+    ActionPickerViewController *_actionPicker;
+}
 @end
 
 @implementation MCTMsgViewController
@@ -60,7 +69,7 @@
     _scrollView = [[UIScrollView alloc] initWithFrame:self.view.bounds];
     _scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _scrollView.scrollEnabled = YES;
-
+    _scrollView.directionalLockEnabled = YES;
     
     NSMutableArray *delayed = [[NSMutableArray alloc] init];
     for (MCOIMAPPart *a in [self.message attachments]) {
@@ -107,6 +116,22 @@
     
     if (_message){
         [self showSpinner];
+    }
+    
+    UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self
+                                                                                            action:@selector(didLongPressOnMessageContentsView:)];
+    [longPress setDelegate:self];
+    [longPress setMinimumPressDuration:0.8f];
+    
+    [_messageContentsView addGestureRecognizer:longPress];
+}
+
+-(void)didLongPressOnMessageContentsView:(UILongPressGestureRecognizer *)recognizer
+{
+    if (recognizer && recognizer.state == UIGestureRecognizerStateRecognized)
+    {
+        CGPoint point = [recognizer locationInView:_messageContentsView];
+        [_messageView handleTapAtpoint:point];
     }
 }
 
@@ -203,6 +228,82 @@ typedef void (^DownloadCallback)(NSError * error);
     }
 }
 
+#pragma mark - UIGestureRecognizerDelegate
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
+{
+    return _messageView.gestureRecognizerEnabled;
+}
+
+#pragma mark - ActionPickerDelegate
+
+- (void)actionPicker:(ActionPickerViewController *)picker didSelectedAction:(Action)action
+{
+    switch (action)
+    {
+        case ActionOpenWithInk:
+        {
+            NSString *uti = [UTIFunctions UTIFromMimetype:picker.imageMimeType Filename:picker.imageName];
+            
+            [Ink showWorkspaceWithUTI:uti dynamicBlob:^INKBlob *
+            {
+                NSData *data = UIImagePNGRepresentation(picker.image);
+                INKBlob *blob = [[INKBlob alloc] init];
+                blob.data = data;
+                blob.filename = picker.imageName;
+                blob.uti = uti;
+                return blob;
+            }
+                              onReturn:^(INKBlob *result, INKAction *action, NSError *error)
+            {
+                if ([action.type isEqualToString:INKActionType_ReturnCancel])
+                {
+                    NSLog(@"Return Cancel");
+                    return;
+                }
+
+            }];
+        }
+            break;
+            
+        case ActionSaveImage:
+        {
+            UIImageWriteToSavedPhotosAlbum(picker.image, self, @selector(image:didFinishSavingWithError:contextInfo:), nil);
+        }
+            break;
+            
+        case ActionCopy:
+        {
+            [[UIPasteboard generalPasteboard] setImage:picker.image];
+        }
+            break;
+            
+        case ActionPreview:
+        {
+            // TODO: make preview
+        }
+            break;
+    }
+    
+    //Dismiss the popover if it's showing.
+    if (_actionPicker)
+    {
+        [_actionPickerPopover dismissPopoverAnimated:YES];
+        _actionPickerPopover = nil;
+    }
+}
+
+- (void)image:(UIImage *) image didFinishSavingWithError: (NSError *) error contextInfo: (void *) contextInfo
+{
+    NSLog(@"SAVE IMAGE COMPLETE");
+    if(error)
+    {
+        NSLog(@"ERROR SAVING:%@",[error localizedDescription]);
+    }
+}
+
+#pragma mark - MCOMessageViewDelegate
+
 - (NSString *) MCOMessageView_templateForAttachmentSeparator:(MCOMessageView *)view {
     return @"";
 }
@@ -258,6 +359,55 @@ typedef void (^DownloadCallback)(NSError * error);
         }
         [blocks addObject:[downloadFinished copy]];
     }
+}
+
+- (void) MCOMessageView:(MCOMessageView *)view handleMailtoUrlString:(NSString *)mailtoAddress
+{
+    ComposerViewController *vc = [[ComposerViewController alloc] initWithTo:@[mailtoAddress]
+                                                                         CC:@[]
+                                                                        BCC:@[]
+                                                                    subject:@""
+                                                                    message:@""
+                                                                attachments:@[]
+                                                         delayedAttachments:@[]];
+    
+    UINavigationController *nc = [[UINavigationController alloc] initWithRootViewController:vc];
+    nc.modalPresentationStyle = UIModalPresentationPageSheet;
+    [self presentViewController:nc animated:YES completion:nil];
+}
+
+- (void) MCOMessageView:(MCOMessageView *)view
+   didTappedInlineImage:(UIImage *)inlineImage
+                atPoint:(CGPoint)point
+              imageRect:(CGRect)rect
+              imagePath:(NSString *)path
+              imageName:(NSString *)imgName
+          imageMimeType:(NSString *)mimeType
+{    
+    if (!_actionPicker)
+    {
+        _actionPicker = [[ActionPickerViewController alloc] initWithStyle:UITableViewStylePlain];
+        _actionPicker.delegate = self;
+    }
+    
+    _actionPicker.image = inlineImage;
+    _actionPicker.imagePath = path;
+    _actionPicker.imageName = imgName;
+    _actionPicker.imageMimeType = mimeType;
+    
+    if (!_actionPickerPopover)
+    {
+        _actionPickerPopover = [[UIPopoverController alloc] initWithContentViewController:_actionPicker];
+        [_actionPickerPopover setDelegate:self];
+        
+        [_actionPickerPopover configureFlatPopoverWithBackgroundColor:[UIColor colorFromHexCode:@"f1f1f1"]
+                                                         cornerRadius:5.f];
+    }
+    
+    [_actionPickerPopover presentPopoverFromRect:rect
+                                          inView:_messageContentsView
+                        permittedArrowDirections:UIPopoverArrowDirectionAny
+                                        animated:YES];
 }
 
 - (NSData *) MCOMessageView:(MCOMessageView *)view previewForData:(NSData *)data isHTMLInlineImage:(BOOL)isHTMLInlineImage
@@ -318,16 +468,16 @@ typedef void (^DownloadCallback)(NSError * error);
     [self hideSpinner];
     
     CGFloat contentHeight = webView.scrollView.contentSize.height;
-    contentHeight = contentHeight > (self.view.bounds.size.height - _headerView.bounds.size.height)? contentHeight : (self.view.bounds.size.height - _headerView.bounds.size.height);
+    CGFloat contentWidth = webView.scrollView.contentSize.width;
+    contentHeight = contentHeight > (self.view.bounds.size.height - _headerView.bounds.size.height) ? contentHeight : (self.view.bounds.size.height - _headerView.bounds.size.height);
 
-    _messageContentsView.frame = CGRectMake(_messageContentsView.frame.origin.x, _messageContentsView.frame.origin.y, _messageContentsView.frame.size.width, contentHeight);
+    _messageContentsView.frame = CGRectMake(_messageContentsView.frame.origin.x, _messageContentsView.frame.origin.y, contentWidth, contentHeight);
     
     for (UIView *v in webView.scrollView.subviews){
         [_messageContentsView addSubview:v];
     }
     
-    _scrollView.contentSize = CGSizeMake(self.view.bounds.size.width, _headerView.bounds.size.height + _messageContentsView.bounds.size.height);
-
+    _scrollView.contentSize = CGSizeMake(_messageContentsView.bounds.size.width, _headerView.bounds.size.height + _messageContentsView.bounds.size.height);
 }
 
 @end
